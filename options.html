@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Keka Clock-In — Settings</title>
+  <style>
+    :root {
+      --keka-purple: #5547a9;
+      --keka-purple-light: #6f5fc4;
+      --bg-dark: #0d151c;
+      --card-bg: #0e1d2b;
+      --card-border: #233040;
+      --text-primary: #ffffff;
+      --text-secondary: #9fadb9;
+      --accent-yellow: #f2c34f;
+      --error-bg: #371417;
+      --error-border: #8a3030;
+      --error-text: #f29b9b;
+      --success-bg: #103226;
+      --success-border: #1f7a52;
+      --success-text: #5ee0a4;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 0 0 40px;
+    }
+    .topbar {
+      background: linear-gradient(
+        90deg,
+        var(--keka-purple) 0%,
+        var(--keka-purple-light) 100%
+      );
+      padding: 22px 24px;
+      margin-bottom: 24px;
+    }
+    .topbar h1 { font-size: 18px; margin: 0 0 4px; color: #fff; }
+    .topbar p { font-size: 13px; margin: 0; color: rgba(255,255,255,0.85); }
+    .page { padding: 0 24px; }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin-bottom: 18px;
+    }
+    .card h2 { font-size: 14px; margin: 0 0 10px; color: var(--text-primary); }
+    .field { margin-bottom: 14px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+    .hint { font-size: 11px; color: var(--text-secondary); margin-top: 4px; opacity: 0.85; }
+    input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 9px 10px;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      font-size: 13px;
+      background: var(--bg-dark);
+      color: var(--text-primary);
+    }
+    input[type="text"]:focus { outline: none; border-color: var(--keka-purple-light); }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; }
+    .checkbox-row label { margin: 0; color: var(--text-primary); }
+    button {
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 9px 16px;
+      cursor: pointer;
+    }
+    .btn-primary { background: var(--keka-purple); color: #fff; }
+    .btn-primary:hover { background: var(--keka-purple-light); }
+    .btn-danger { background: var(--error-bg); color: var(--error-text); border: 1px solid var(--error-border); }
+    .btn-danger:hover { background: #4a1c20; }
+    .btn-text { background: transparent; color: var(--keka-purple-light); text-decoration: underline; padding: 0; }
+    #saveStatus { font-size: 12px; color: var(--success-text); margin-left: 10px; }
+    #checkStatus { font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>Keka Clock-In — Settings</h1>
+    <p>Configure how the extension finds your Keka session and when it reminds you.</p>
+  </div>
+
+  <div class="page">
+    <div class="card">
+      <h2>Token source</h2>
+      <div class="field">
+        <label for="tokenKey">LocalStorage key on hr.keka.com</label>
+        <input type="text" id="tokenKey" placeholder="access_token" />
+        <div class="hint">
+          Open hr.keka.com → DevTools (F12) → Application → Local Storage →
+          hr.keka.com, and find the key that holds your access token. If
+          you're not sure, leave the default — the extension also
+          auto-scans for any key containing "token".
+        </div>
+      </div>
+      <div class="field">
+        <label for="manualToken">Manual token override (optional)</label>
+        <input type="text" id="manualToken" placeholder="Paste a token here to force-use it" />
+        <div class="hint">
+          Only used as a last resort, when no hr.keka.com tab is open and
+          nothing is cached. Leave blank for normal use.
+        </div>
+      </div>
+      <button id="checkBtn" class="btn-text">Check token status</button>
+      <div id="checkStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>Reminder behavior</h2>
+      <div class="field checkbox-row">
+        <input type="checkbox" id="alwaysShow" />
+        <label for="alwaysShow">Show the reminder on every new tab (instead of once per session)</label>
+      </div>
+      <div class="hint">
+        The reminder never appears once today's clock-in is already marked,
+        regardless of this setting.
+      </div>
+    </div>
+
+    <div>
+      <button id="saveBtn" class="btn-primary">Save settings</button>
+      <span id="saveStatus"></span>
+    </div>
+
+    <div class="card" style="margin-top: 24px;">
+      <h2>Reset</h2>
+      <p class="hint">Clears all stored tokens, history, and settings.</p>
+      <button id="clearDataBtn" class="btn-danger">Clear all extension data</button>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

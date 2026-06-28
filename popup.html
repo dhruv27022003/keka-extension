@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Keka Clock-In</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="topbar">
+    <img src="icons/icon48.png" alt="" width="22" height="22" />
+    <h1>Keka Clock-In</h1>
+  </div>
+
+  <div class="container">
+    <div id="status" class="status">Checking your Keka session…</div>
+
+    <div id="warningBox" class="warning hidden">
+      <p class="warning-title">⚠️ No Keka session found</p>
+      <p>
+        We couldn't find a valid access token in your browser's local
+        storage. Open <strong>hr.keka.com</strong>, log in, then come back
+        and try again.
+      </p>
+      <button id="openKekaBtn" class="btn btn-primary">
+        Open hr.keka.com
+      </button>
+      <button id="retryBtn" class="btn btn-text">Retry</button>
+    </div>
+
+    <div id="resultBox" class="result hidden"></div>
+
+    <div class="footer">
+      <a href="#" id="optionsLink">Settings</a>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
