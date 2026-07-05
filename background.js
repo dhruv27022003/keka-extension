@@ -1,36 +1,50 @@
 // background.js (Manifest V3 service worker)
-//
-// Responsibilities:
-//  1. Trigger a "Mark as Clock-In" popup window when Chrome starts up.
-//  2. If Chrome was already running, trigger the same popup on the next
-//     new tab opened (once per browser session, unless the user enabled
-//     "always show" in settings).
-//  3. Fetch the freshest possible Keka access token (prefer reading it
-//     live from an open hr.keka.com tab; fall back to the last cached
-//     value synced by content.js, or a manually pasted override token).
-//  4. Perform the actual clock-in POST request to Keka's API.
 
 const KEKA_ORIGIN = "https://hr.keka.com";
 const CLOCKIN_URL =
   "https://hr.keka.com/k/attendance/api/mytime/attendance/webclockin";
 const DEFAULT_TOKEN_KEY = "access_token";
 
-// ---------- Helpers ----------
+// How long after a successful clockin before we treat it as "stale"
+// and hit the API again (6 hours in milliseconds).
+const RECLOCKIN_AFTER_MS = 6 * 60 * 60 * 1000;
+
+// ---------- State helpers ----------
 
 function todayString() {
   return new Date().toDateString();
 }
 
-async function isAlreadyClockedInToday() {
-  const { lastClockinDate } = await chrome.storage.local.get(
-    "lastClockinDate"
-  );
-  return lastClockinDate === todayString();
+// Returns an object describing the current clockin state:
+//   { needed: bool, reason: string }
+//
+// "needed" is true in two cases:
+//   1. Not clocked in at all today.
+//   2. Clocked in today but more than RECLOCKIN_AFTER_MS ago (stale).
+async function getClockinState() {
+  const { lastClockinDate, lastClockinTime } = await chrome.storage.local.get([
+    "lastClockinDate",
+    "lastClockinTime",
+  ]);
+
+  // Case 1: never clocked in today.
+  if (lastClockinDate !== todayString()) {
+    return { needed: true, reason: "not_clocked_in" };
+  }
+
+  // Case 2: clocked in today but stale (> 6 hours ago).
+  if (lastClockinTime) {
+    const elapsed = Date.now() - new Date(lastClockinTime).getTime();
+    if (elapsed > RECLOCKIN_AFTER_MS) {
+      return { needed: true, reason: "stale", elapsed };
+    }
+  }
+
+  return { needed: false, reason: "ok" };
 }
 
-// Reads the token straight out of an open hr.keka.com tab's localStorage,
-// falling back to the cached / manually-entered token if no tab is open
-// or the read fails for any reason.
+// ---------- Token helpers ----------
+
 async function getFreshToken() {
   try {
     const tabs = await chrome.tabs.query({ url: `${KEKA_ORIGIN}/*` });
@@ -41,23 +55,21 @@ async function getFreshToken() {
       const results = await chrome.scripting.executeScript({
         target: { tabId: tabs[0].id },
         func: (keyHint) => {
-          function extractToken(keyHint) {
+          function extractToken(k) {
             try {
-              if (keyHint) {
-                const direct = localStorage.getItem(keyHint);
-                if (direct) return direct;
-              }
+              const direct = localStorage.getItem(k);
+              if (direct) return direct;
               for (let i = 0; i < localStorage.length; i++) {
-                const k = localStorage.key(i);
-                if (k && k.toLowerCase().includes("token")) {
-                  const v = localStorage.getItem(k);
+                const key = localStorage.key(i);
+                if (key && key.toLowerCase().includes("token")) {
+                  const v = localStorage.getItem(key);
                   if (v && v.length > 20) return v;
                 }
               }
             } catch (e) {}
             return null;
           }
-          return extractToken(keyHint);
+          return extractToken(k);
         },
         args: [keyHint],
       });
@@ -76,7 +88,6 @@ async function getFreshToken() {
     console.warn("[Keka Clock-In] Live token read failed:", e);
   }
 
-  // Fall back to a manually entered override, then the last cached value.
   const { manualToken, kekaToken } = await chrome.storage.local.get([
     "manualToken",
     "kekaToken",
@@ -86,8 +97,8 @@ async function getFreshToken() {
   return null;
 }
 
-// Performs the actual clock-in call against Keka's API.
-// Note is always fixed (no user input) per the simplified, fully automatic flow.
+// ---------- Clock-in API call ----------
+
 async function doClockin() {
   const token = await getFreshToken();
   if (!token) {
@@ -97,8 +108,6 @@ async function doClockin() {
         "No Keka access token found. Open hr.keka.com, log in, then try again.",
     };
   }
-
-  const finalNote = "Clockin marked automatically";
 
   try {
     const response = await fetch(CLOCKIN_URL, {
@@ -112,7 +121,7 @@ async function doClockin() {
         attendanceLogSource: 1,
         locationAddress: null,
         manualClockinType: 1,
-        note: finalNote,
+        note: "Clockin marked automatically",
         originalPunchStatus: 0,
       }),
     });
@@ -134,15 +143,13 @@ async function doClockin() {
     }
 
     let bodyText = "";
-    try {
-      bodyText = (await response.text()).slice(0, 200);
-    } catch (e) {}
+    try { bodyText = (await response.text()).slice(0, 200); } catch (e) {}
 
     if (response.status === 401 || response.status === 403) {
       return {
         success: false,
         message:
-          "Clock-in failed: your session/token has expired. Open hr.keka.com, log in again, then retry.",
+          "Clock-in failed: session/token has expired. Open hr.keka.com, log in again.",
       };
     }
 
@@ -158,8 +165,12 @@ async function doClockin() {
   }
 }
 
-// Opens (or focuses, if already open) the small popup window that asks
-// the user to "Mark as Clock-In" / shows the missing-token warning.
+// ---------- Popup window management ----------
+//
+// We track the reminder window id in session storage so we can re-focus
+// it instead of spawning a second one. When the window is closed by the
+// user we clear the stored id so the next trigger opens a fresh window.
+
 async function showReminderPopup() {
   const { reminderWindowId } = await chrome.storage.session.get(
     "reminderWindowId"
@@ -170,7 +181,7 @@ async function showReminderPopup() {
       await chrome.windows.update(reminderWindowId, { focused: true });
       return;
     } catch (e) {
-      // window no longer exists - fall through and create a new one
+      // window is gone — fall through and open a new one
     }
   }
 
@@ -195,49 +206,35 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
 
 // ---------- Triggers ----------
 
-// 1) Fires once, right when Chrome itself starts up.
-chrome.runtime.onStartup.addListener(async () => {
-  await chrome.storage.session.set({ shownThisSession: false });
-  const alreadyDone = await isAlreadyClockedInToday();
-  if (!alreadyDone) {
-    await showReminderPopup();
-    await chrome.storage.session.set({ shownThisSession: true });
-  }
-});
-
-// 2) If Chrome was already open, fire on the next new tab instead
-//    (once per session by default, or every new tab if the user
-//    enabled "always show" in Settings).
-chrome.tabs.onCreated.addListener(async (tab) => {
+// Helper used by both onStartup and tabs.onCreated.
+// Decides whether to open the popup and does so if needed.
+async function maybeShowPopup(tabUrl) {
+  // Never trigger for our own extension pages.
   try {
     const ownPrefix = chrome.runtime.getURL("");
-    if (
-      (tab.url && tab.url.startsWith(ownPrefix)) ||
-      (tab.pendingUrl && tab.pendingUrl.startsWith(ownPrefix))
-    ) {
-      return; // ignore our own reminder popup window/tab
-    }
+    if (tabUrl && tabUrl.startsWith(ownPrefix)) return;
   } catch (e) {}
 
-  const { shownThisSession } = await chrome.storage.session.get(
-    "shownThisSession"
-  );
-  const { settings } = await chrome.storage.local.get("settings");
-  const alwaysShow = !!(settings && settings.alwaysShowOnNewTab);
+  const state = await getClockinState();
 
-  // Never show the reminder once today's clock-in is already marked.
-  const alreadyDone = await isAlreadyClockedInToday();
-  if (alreadyDone) return;
-
-  if (shownThisSession && !alwaysShow) return;
+  if (!state.needed) return; // today is fine and not stale — do nothing
 
   await showReminderPopup();
-  if (!alwaysShow) {
-    await chrome.storage.session.set({ shownThisSession: true });
-  }
+}
+
+// 1) Chrome just launched.
+chrome.runtime.onStartup.addListener(async () => {
+  await maybeShowPopup(null);
 });
 
-// ---------- Messaging with popup.js / options.js ----------
+// 2) A new tab was opened (covers the case where Chrome was already running).
+//    We check on EVERY new tab — no shownThisSession gate — so a missed or
+//    failed clock-in will be retried on the very next tab the user opens.
+chrome.tabs.onCreated.addListener(async (tab) => {
+  await maybeShowPopup(tab.url || tab.pendingUrl || "");
+});
+
+// ---------- Messaging ----------
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
@@ -249,8 +246,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           "lastClockinTime",
           "tokenSource",
         ]);
+      const state = await getClockinState();
       sendResponse({
         hasToken: !!token,
+        clockinNeeded: state.needed,
+        clockinReason: state.reason,
         alreadyClockedInToday: lastClockinDate === todayString(),
         lastClockinTime: lastClockinTime || null,
         tokenSource: tokenSource || null,
@@ -262,5 +262,5 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ error: "Unknown message type" });
     }
   })();
-  return true; // keep the message channel open for the async response
+  return true;
 });

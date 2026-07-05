@@ -1,9 +1,12 @@
 // popup.js
 //
-// No note input, no manual button. On open this popup:
-//   1. Checks if a Keka session/token is available -> if not, shows a warning.
-//   2. Checks if already clocked in today -> if so, just shows that status.
-//   3. Otherwise, calls the clock-in API automatically and shows the result.
+// Fully automatic: no note input, no manual button.
+//
+// Flow on open:
+//   1. GET_STATUS from background.
+//   2. No token  → show warning card (no API call).
+//   3. Token OK, clockin not needed (fresh today) → show "already clocked in" status.
+//   4. Token OK, clockin needed (not done yet OR stale > 6 hrs) → call DO_CLOCKIN.
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -11,17 +14,25 @@ function sendMessage(msg) {
   return new Promise((resolve) => chrome.runtime.sendMessage(msg, resolve));
 }
 
+function fmt(isoString) {
+  if (!isoString) return "";
+  return new Date(isoString).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 async function init() {
-  const statusEl = document.getElementById("status");
+  const statusEl   = document.getElementById("status");
   const warningBox = document.getElementById("warningBox");
-  const resultBox = document.getElementById("resultBox");
+  const resultBox  = document.getElementById("resultBox");
   const openKekaBtn = document.getElementById("openKekaBtn");
-  const retryBtn = document.getElementById("retryBtn");
+  const retryBtn   = document.getElementById("retryBtn");
   const optionsLink = document.getElementById("optionsLink");
 
-  openKekaBtn.addEventListener("click", () => {
-    chrome.tabs.create({ url: "https://hr.keka.com/" });
-  });
+  openKekaBtn.addEventListener("click", () =>
+    chrome.tabs.create({ url: "https://hr.keka.com/" })
+  );
   retryBtn.addEventListener("click", run);
   optionsLink.addEventListener("click", (e) => {
     e.preventDefault();
@@ -29,10 +40,12 @@ async function init() {
   });
 
   async function run() {
-    statusEl.classList.remove("hidden");
+    // Reset UI to loading state.
     statusEl.textContent = "Checking your Keka session…";
+    statusEl.classList.remove("hidden");
     warningBox.classList.add("hidden");
     resultBox.classList.add("hidden");
+    resultBox.className = "result hidden";
 
     const status = await sendMessage({ type: "GET_STATUS" });
 
@@ -42,25 +55,29 @@ async function init() {
       return;
     }
 
-    if (status.alreadyClockedInToday) {
-      const t = status.lastClockinTime
-        ? new Date(status.lastClockinTime).toLocaleTimeString()
-        : "";
-      statusEl.textContent = t
-        ? `✅ Already clocked in today at ${t}`
+    // Clock-in is current — nothing to do.
+    if (!status.clockinNeeded) {
+      statusEl.textContent = status.lastClockinTime
+        ? `✅ Already clocked in today at ${fmt(status.lastClockinTime)}`
         : "✅ Already clocked in today";
       return;
     }
 
-    // Token available and not yet clocked in today -> call the API directly.
-    statusEl.textContent = "Marking your attendance…";
+    // Clock-in is needed (first time today, or stale > 6 hours).
+    const isStale = status.clockinReason === "stale";
+    statusEl.textContent = isStale
+      ? `Last clockin was over 6 hours ago (${fmt(status.lastClockinTime)}). Re-clocking in…`
+      : "Session found. Marking your attendance…";
+
     const result = await sendMessage({ type: "DO_CLOCKIN" });
 
     statusEl.classList.add("hidden");
     resultBox.classList.remove("hidden");
 
     if (result && result.success) {
-      resultBox.textContent = "Clockin is marked";
+      resultBox.textContent = isStale
+        ? "Clockin is marked (re-clocked after 6 hrs)"
+        : "Clockin is marked";
       resultBox.className = "result success";
     } else {
       resultBox.textContent =
